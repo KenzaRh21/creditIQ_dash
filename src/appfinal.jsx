@@ -163,42 +163,22 @@ export default function App() {
     Q=D.seuils_rfm||{}, M=D.model_metrics||{}, CD=D.cashflow_mensuel||[],
     DD=D.dso_mensuel||[], RT=D.risque_par_taille||[], FH=D.fhist||[],
     MS=D.matrice_sante||[], SPS=D.score_par_segment||[],
-    ALL_C=D.all_clients||[], FACS=D.factures_par_client||{},
-    FC=D.forecasts_clients||{};
+    ALL_C=D.all_clients||[], FACS=D.factures_par_client||{};
 
   const scatterData=MS.map(c=>({
     x:parseFloat(c.score_fidelite)||0, y:parseFloat(c.prob_retard_moy)||0,
     nom:c.nom_client, seg:c.segment_rfm,
   }));
 
-  // Remplace l'ancien mapClient par cette version qui reçoit FACS en paramètre
-const mapClient = (c, facs) => {
-  const factures = facs[String(c.fk_soc)] || [];
-  
-  // Retard max parmi les factures impayées en retard (le plus urgent)
-  const retardMax = factures
-    .filter(f => f.paye === 0 && (f.retard_jours_reel || 0) > 0)
-    .reduce((max, f) => Math.max(max, f.retard_jours_reel || 0), 0);
+  const mapClient=c=>({
+    fk_soc:c.fk_soc, nom:c.nom_client, ttc:c.ca_total, p:c.prob_retard_moy,
+    ipr:c.ipr_total, rfm:c.segment_rfm, fid:c.score_fidelite, taille:c.taille||"—",
+    st:gst(c.prob_retard_moy), anom:c.is_anomalie===1,
+    ret:c.prob_retard_moy>0.436?Math.round(c.prob_retard_moy*35):0,
+  });
 
-  return {
-    fk_soc:  c.fk_soc,
-    nom:     c.nom_client,
-    ttc:     c.ca_total,
-    p:       c.prob_retard_moy,
-    ipr:     c.ipr_total,
-    ipr_ag:  c.ipr_agrege,
-    rfm:     c.segment_rfm,
-    fid:     c.score_fidelite,
-    taille:  c.taille || "—",
-    st:      c.statut_risque || gst(c.prob_retard_moy),
-    anom:    c.is_anomalie === 1,
-    nouveau: c.is_nouveau === 1,
-    ret:     Math.round(retardMax),   // jours réels, pas une estimation
-  };
-};
-
-  const clients    = T10.map(c => mapClient(c, FACS));
-  const allClients = ALL_C.length > 0 ? ALL_C.map(c => mapClient(c, FACS)) : clients;
+  const clients=T10.map(mapClient);
+  const allClients=ALL_C.length>0?ALL_C.map(mapClient):clients;
   const nCrit=K.nb_critiques||0, nRisk=K.nb_risque||0;
   const nSain=K.nb_sain||((K.nb_clients||0)-nCrit-nRisk);
   const nCritF=K.nb_critiques_fact||0, nRiskF=K.nb_risque_fact||0, nAnom=K.nb_anomalies||0;
@@ -225,22 +205,7 @@ const mapClient = (c, facs) => {
   const [drillClient,setDrillClient]=useState(null);
   const [relLoading,setRelLoading]=useState(false);
   const [relDone,setRelDone]=useState({});
-const [alertes, setAlertes]   = useState([]);
-const [histData, setHistData] = useState([]);
-const [alertLoad, setAlertLoad] = useState(false);
 
-React.useEffect(() => {
-    if (tab !== "al") return;
-    setAlertLoad(true);
-    Promise.all([
-        fetch("http://localhost:5000/api/scoring/activite").then(r => r.json()),
-        fetch("http://localhost:5000/api/scoring/history").then(r => r.json()),
-    ]).then(([act, hist]) => {
-        setAlertes(act.data || []);
-        setHistData((hist.data || []).slice().reverse()); // chrono ascendant pour le graphe
-        setAlertLoad(false);
-    }).catch(() => setAlertLoad(false));
-}, [tab]);
   const today=new Date().toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"numeric"});
   const toggleSort=k=>{if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc");else{setSortKey(k);setSortDir("desc");}};
   const ovToggleSort=k=>{if(ovSortKey===k)setOvSortDir(d=>d==="asc"?"desc":"asc");else{setOvSortKey(k);setOvSortDir("desc");}};
@@ -277,8 +242,7 @@ React.useEffect(() => {
     if(key==="nom")return c.nom.toLowerCase();
     if(key==="taille")return c.taille;
     if(key==="ttc")return c.ttc; if(key==="p")return c.p;
-    if(key==="ipr")return c.ipr;
-    if(key==="ipr_ag")return c.ipr_ag; if(key==="fid")return c.fid;
+    if(key==="ipr")return c.ipr; if(key==="fid")return c.fid;
     if(key==="rfm")return c.rfm; if(key==="ret")return c.ret;
     if(key==="st")return["CRITIQUE","RISQUE","SAIN"].indexOf(c.st);
     return 0;
@@ -317,7 +281,6 @@ React.useEffect(() => {
     {id:"rfm",lb:"Fidélité RFM",bdg:nAnom>0?nAnom:null,bc:"#7c3aed"},
     {id:"fc",lb:"Prévisions"},
     {id:"ai",lb:"Modèle IA"},
-    {id:"al",lb:"Alertes"},
   ];
 
   const css={
@@ -492,12 +455,13 @@ React.useEffect(() => {
               </>}>
               <div style={{overflowX:"auto"}}>
                 <table style={css.table}>
-                  <thead><tr><th style={css.th}>#</th>{thOvSort("Client","nom")}{thOvSort("Taille","taille")}{thOvSort("CA total","ttc")}{thOvSort("Prob. retard","p")}{thOvSort("IPR / fact","ipr")}{thOvSort("IPR client","ipr_ag")}{thOvSort("Fidélité","fid")}{thOvSort("Segment","rfm")}{thOvSort("Statut","st")}<th style={css.th}>Action</th></tr></thead>
+                  <thead><tr><th style={css.th}>#</th>{thOvSort("Client","nom")}{thOvSort("Taille","taille")}{thOvSort("CA total","ttc")}{thOvSort("Prob. retard","p")}{thOvSort("IPR","ipr")}{thOvSort("Fidélité","fid")}{thOvSort("Segment","rfm")}{thOvSort("Statut","st")}<th style={css.th}>Action</th></tr></thead>
                   <tbody>
                     {ovClients.map((c,i)=>(
                       <tr key={c.fk_soc} style={{background:c.anom?"#fffbeb":"transparent"}}>
                         <td style={{...css.td,color:"#94a3b8",fontSize:10}}>{String(i+1).padStart(2,"0")}</td>
-<td style={css.td}><div style={{fontWeight:500}}>{c.nom}</div>{c.anom&&<Badge color="#854f09" bg="#fef3c7">⚠ anomalie</Badge>}{c.nouveau&&<Badge color="#0e7490" bg="#ecfeff">🆕 nouveau</Badge>}</td>                        <td style={css.td}><Badge color="#374151" bg="#f8fafc">{c.taille}</Badge></td>
+                        <td style={css.td}><div style={{fontWeight:500}}>{c.nom}</div>{c.anom&&<Badge color="#854f09" bg="#fef3c7">⚠ anomalie</Badge>}</td>
+                        <td style={css.td}><Badge color="#374151" bg="#f8fafc">{c.taille}</Badge></td>
                         <td style={{...css.td,...css.mono}}>{fmt(c.ttc)} MAD</td>
                         <td style={{...css.td,minWidth:110}}>
                           <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -505,14 +469,8 @@ React.useEffect(() => {
                             <span style={{...css.mono,color:pc(c.p),fontWeight:700}}>{fmtP(c.p)}</span>
                           </div>
                         </td>
-<td style={css.td}>
-  <span style={{...css.mono,fontWeight:700,color:c.ipr>8?"#dc2626":c.ipr>6?"#d97706":"#16a34a"}}>{c.ipr.toFixed(1)}</span>
-  <div style={{fontSize:9,color:"#94a3b8"}}>/ fact</div>
-</td>
-<td style={css.td}>
-  <span style={{...css.mono,fontWeight:700,color:c.ipr_ag>8?"#dc2626":c.ipr_ag>6?"#d97706":"#16a34a"}}>{(c.ipr_ag||0).toFixed(1)}</span>
-  <div style={{fontSize:9,color:"#1d4ed8"}}>client</div>
-</td>                        <td style={css.td}>
+                        <td style={css.td}><span style={{...css.mono,fontWeight:700,color:c.ipr>8?"#dc2626":c.ipr>6?"#d97706":"#16a34a"}}>{c.ipr.toFixed(1)}</span></td>
+                        <td style={css.td}>
                           <div style={{display:"flex",alignItems:"center",gap:5}}>
                             <PBar pct={c.fid} color={c.fid>70?"#1d4ed8":c.fid>50?"#16a34a":c.fid>30?"#d97706":"#dc2626"} w="36px"/>
                             <span style={{...css.mono,fontWeight:700}}>{c.fid}</span>
@@ -591,24 +549,19 @@ React.useEffect(() => {
               </>}>
               <div style={{overflowX:"auto"}}>
                 <table style={css.table}>
-                  <thead><tr><th style={css.th}>#</th>{thSort("Client","nom")}{thSort("Taille","taille")}{thSort("CA total","ttc")}{thSort("Prob. retard","p")}{thSort("IPR / fact","ipr")}{thSort("IPR client","ipr_ag")}{thSort("Fidélité","fid")}{thSort("Segment","rfm")}{thSort("Retard est.","ret")}{thSort("Statut","st")}<th style={css.th}>Action</th></tr></thead>
+                  <thead><tr><th style={css.th}>#</th>{thSort("Client","nom")}{thSort("Taille","taille")}{thSort("CA total","ttc")}{thSort("Prob. retard","p")}{thSort("IPR","ipr")}{thSort("Fidélité","fid")}{thSort("Segment","rfm")}{thSort("Retard est.","ret")}{thSort("Statut","st")}<th style={css.th}>Action</th></tr></thead>
                   <tbody>
                     {rows.map((c,i)=>(
                       <tr key={c.fk_soc} style={{background:c.anom?"#fffbeb":"transparent"}}>
                         <td style={{...css.td,color:"#94a3b8",fontSize:10}}>{String(i+1).padStart(2,"0")}</td>
-<td style={css.td}><strong>{c.nom}</strong>{c.anom&&<span style={{marginLeft:4}}><Badge color="#854f09" bg="#fef3c7">⚠ ANOM</Badge></span>}{c.nouveau&&<span style={{marginLeft:4}}><Badge color="#0e7490" bg="#ecfeff">🆕</Badge></span>}</td>                        <td style={css.td}><Badge color="#374151" bg="#f8fafc">{c.taille}</Badge></td>
+                        <td style={css.td}><strong>{c.nom}</strong>{c.anom&&<span style={{marginLeft:4}}><Badge color="#854f09" bg="#fef3c7">⚠ ANOM</Badge></span>}</td>
+                        <td style={css.td}><Badge color="#374151" bg="#f8fafc">{c.taille}</Badge></td>
                         <td style={{...css.td,...css.mono}}>{fmt(c.ttc)}</td>
                         <td style={{...css.td,minWidth:110}}>
                           <div style={{display:"flex",alignItems:"center",gap:6}}><PBar pct={c.p*100} color={pc(c.p)} w="50px"/><span style={{...css.mono,color:pc(c.p),fontWeight:700}}>{fmtP(c.p)}</span></div>
                         </td>
-<td style={css.td}>
-  <span style={{...css.mono,fontWeight:700,color:c.ipr>8?"#dc2626":c.ipr>6?"#d97706":"#16a34a"}}>{c.ipr.toFixed(1)}</span>
-  <div style={{fontSize:9,color:"#94a3b8"}}>/ fact</div>
-</td>
-<td style={css.td}>
-  <span style={{...css.mono,fontWeight:700,color:c.ipr_ag>8?"#dc2626":c.ipr_ag>6?"#d97706":"#16a34a"}}>{(c.ipr_ag||0).toFixed(1)}</span>
-  <div style={{fontSize:9,color:"#1d4ed8"}}>client</div>
-</td>                        <td style={css.td}><div style={{display:"flex",alignItems:"center",gap:5}}><PBar pct={c.fid} color={c.fid>70?"#1d4ed8":c.fid>50?"#16a34a":c.fid>30?"#d97706":"#dc2626"} w="36px"/><span style={{...css.mono,fontWeight:700}}>{c.fid}</span></div></td>
+                        <td style={css.td}><span style={{...css.mono,fontWeight:700,color:c.ipr>8?"#dc2626":c.ipr>6?"#d97706":"#16a34a"}}>{c.ipr.toFixed(1)}</span></td>
+                        <td style={css.td}><div style={{display:"flex",alignItems:"center",gap:5}}><PBar pct={c.fid} color={c.fid>70?"#1d4ed8":c.fid>50?"#16a34a":c.fid>30?"#d97706":"#dc2626"} w="36px"/><span style={{...css.mono,fontWeight:700}}>{c.fid}</span></div></td>
                         <td style={css.td}><SegBadge seg={c.rfm}/></td>
                         <td style={css.td}><span style={{...css.mono,fontWeight:700,color:c.ret>0?"#dc2626":"#94a3b8"}}>{c.ret>0?`+${c.ret}j`:"—"}</span></td>
                         <td style={css.td}><StatBadge st={c.st}/></td>
@@ -621,7 +574,7 @@ React.useEffect(() => {
                   </tbody>
                 </table>
               </div>
-              <div style={css.footer}>Tri actif : <strong style={{color:"#1d4ed8"}}>{sortKey}</strong> {sortDir==="asc"?"↑":"↓"} · Statut client = calculé par l'API (retard réel inclus) · {K.nb_clients} clients total</div>
+              <div style={css.footer}>Tri actif : <strong style={{color:"#1d4ed8"}}>{sortKey}</strong> {sortDir==="asc"?"↑":"↓"} · Statut client = classification par prob_retard_moy · {K.nb_clients} clients total</div>
             </Panel>
           </>
         )}
@@ -800,86 +753,6 @@ React.useEffect(() => {
             </Panel>
           </>
         )}
-        {tab==="al"&&(
-    <>
-        <div style={css.row2b}>
-            <Panel title="Fil d'activité — relances CréditIQ"
-                meta={<Badge color="#1d4ed8" bg="#eff6ff">{alertes.length} événements</Badge>}>
-                {alertLoad
-                    ? <div style={{color:"#94a3b8",fontSize:11,padding:"12px 0"}}>Chargement...</div>
-                    : alertes.length === 0
-                        ? <div style={{color:"#94a3b8",fontSize:11,padding:"12px 0"}}>Aucune relance enregistrée</div>
-                        : alertes.map(a => (
-                            <div key={a.id} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"0.5px solid #f1f5f9"}}>
-                                <div style={{width:6,height:6,borderRadius:"50%",background:"#1d4ed8",flexShrink:0,marginTop:4}}/>
-                                <div style={{flex:1}}>
-                                    <div style={{fontSize:11,fontWeight:500,color:"#1e293b"}}>{a.nom_client}</div>
-                                    <div style={{fontSize:10,color:"#64748b",marginTop:1}}>{a.label}</div>
-                                    <div style={{fontSize:10,color:"#94a3b8",marginTop:1,fontFamily:"monospace"}}>{a.date_action}</div>
-                                </div>
-                                <div style={{fontSize:10,color:"#64748b",textAlign:"right",flexShrink:0}}>
-                                    {a.note?.split('\n').find(l=>l.startsWith('Prob'))?.replace('Prob. retard: ','')||''}
-                                </div>
-                            </div>
-                        ))
-                }
-            </Panel>
-
-            <Panel title="Évolution — clients critiques & à risque">
-                {histData.length < 2
-                    ? <div style={{color:"#94a3b8",fontSize:11,padding:"12px 0"}}>
-                        Données insuffisantes — recharger le dashboard plusieurs fois pour alimenter l'historique.
-                      </div>
-                    : <ResponsiveContainer width="100%" height={220}>
-                        <LineChart data={histData} margin={{top:4,right:8,bottom:0,left:0}}>
-                            <CartesianGrid stroke="#f1f5f9" vertical={false}/>
-                            <XAxis dataKey="date_calcul" tick={{fontSize:9,fill:"#94a3b8"}} axisLine={false} tickLine={false}
-                                tickFormatter={v=>v.slice(5,10)}/>
-                            <YAxis tick={{fontSize:9,fill:"#94a3b8"}} axisLine={false} tickLine={false}/>
-                            <Tooltip content={<Tooltip2/>}/>
-                            <Line type="monotone" dataKey="nb_critiques" name="Critiques" stroke="#dc2626" strokeWidth={2} dot={{r:3,fill:"#dc2626"}}/>
-                            <Line type="monotone" dataKey="nb_risque"    name="À risque"  stroke="#d97706" strokeWidth={2} dot={{r:3,fill:"#d97706"}}/>
-                            <Line type="monotone" dataKey="nb_sain"      name="Sains"     stroke="#16a34a" strokeWidth={1.5} strokeDasharray="4 3" dot={false}/>
-                        </LineChart>
-                    </ResponsiveContainer>
-                }
-                <div style={css.footer}>
-                    {histData.length} snapshot(s) · se remplit automatiquement à chaque recalcul
-                </div>
-            </Panel>
-        </div>
-
-        <Panel title="Synthèse des snapshots" meta={
-            <Badge color="#374151" bg="#f8fafc">{histData.length} calcul(s)</Badge>
-        }>
-            <div style={{overflowX:"auto"}}>
-                <table style={css.table}>
-                    <thead>
-                        <tr>
-                            {["Date","Critiques","À risque","Sains","Exposition risque","Bad Debt","DSO moy.","Anomalies"].map(h=>
-                                <th key={h} style={css.th}>{h}</th>
-                            )}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {[...histData].reverse().map((r,i)=>(
-                            <tr key={i}>
-                                <td style={{...css.td,...css.mono,fontSize:10}}>{r.date_calcul}</td>
-                                <td style={{...css.td,...css.mono,color:"#dc2626",fontWeight:700}}>{r.nb_critiques}</td>
-                                <td style={{...css.td,...css.mono,color:"#d97706",fontWeight:700}}>{r.nb_risque}</td>
-                                <td style={{...css.td,...css.mono,color:"#16a34a"}}>{r.nb_sain}</td>
-                                <td style={{...css.td,...css.mono}}>{fmtM(parseFloat(r.exposition_risque))}M MAD</td>
-                                <td style={{...css.td,...css.mono,color:"#dc2626"}}>{fmtM(parseFloat(r.bad_debt))}M MAD</td>
-                                <td style={{...css.td,...css.mono,color:"#d97706"}}>{r.dso_moyen}j</td>
-                                <td style={{...css.td,...css.mono,color:"#7c3aed"}}>{r.nb_anomalies}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </Panel>
-    </>
-)}
       </div>
 
       {/* ══ MODALE DRILL-DOWN ══ */}
@@ -906,40 +779,7 @@ React.useEffect(() => {
                 {[{l:"CA total",v:fmt(c.ttc)+" MAD",col:"#1d4ed8"},{l:"Prob. retard",v:fmtP(c.p),col:pc(c.p)},{l:"IPR",v:c.ipr.toFixed(2),col:c.ipr>8?"#dc2626":c.ipr>6?"#d97706":"#16a34a"},{l:"Fidélité",v:c.fid+"/100",col:c.fid>70?"#1d4ed8":c.fid>40?"#16a34a":"#d97706"}]
                   .map(k=>(<div key={k.l} style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",borderTop:`2.5px solid ${k.col}`}}><div style={{fontSize:10,color:"#64748b",marginBottom:2}}>{k.l}</div><div style={{fontSize:16,fontWeight:500,color:k.col,fontFamily:"monospace"}}>{k.v}</div></div>))}
               </div>
-              {(()=>{
-  const fc = FC[String(c.fk_soc)];
-  if (!fc || fc.forecast_m1 === 0) return null;
 
-  // ← définition de la variable ICI, dans le scope du IIFE
-  const hasImpayeLong = (FACS[String(c.fk_soc)]||[])
-    .some(f => f.paye === 0 && (f.retard_jours_reel||0) > 90);
-
-  if (hasImpayeLong) return (
-    <div style={{background:"#fef2f2",border:"0.5px solid #fca5a5",borderRadius:8,padding:"10px 14px",fontSize:11,color:"#7f1d1d"}}>
-      ⚠ Forecast non affiché — client avec impayé actif &gt; 90j. Régulariser avant de projeter le CA.
-    </div>
-  );
-
-  return (
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-      {[
-        {l:"Forecast M+1",         v:fmt(fc.forecast_m1)+" MAD",        col:"#1d4ed8"},
-        {l:"Forecast M+2",         v:fmt(fc.forecast_m2)+" MAD",        col:"#7c3aed"},
-        {l:"Encours sécurisé M+1", v:fmt(fc.encours_securise_m1)+" MAD",col:"#16a34a"},
-      ].map(k=>(
-        <div key={k.l} style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",borderTop:`2.5px solid ${k.col}`}}>
-          <div style={{fontSize:10,color:"#64748b",marginBottom:2}}>{k.l}</div>
-          <div style={{fontSize:14,fontWeight:500,color:k.col,fontFamily:"monospace"}}>{k.v}</div>
-          <div style={{fontSize:10,color:"#94a3b8",marginTop:2}}>
-            {k.l==="Encours sécurisé M+1"
-              ? `prob. retard ${(fc.prob_retard_moy*100).toFixed(1)}%`
-              : fc.fiabilite}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-})()}
               {probCurve.length>1&&(
                 <div>
                   <div style={{fontSize:12,fontWeight:500,color:"#1e293b",marginBottom:8}}>Évolution probabilité de retard — {facs.length} factures</div>
